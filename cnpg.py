@@ -47,17 +47,19 @@ class CnpgIndexer(IndexerConverter):
 
     def _index_cluster(self, m, ctx):
         meta = m.get("metadata") or {}
-        name = meta.get("name", "")
-        ns = meta.get("namespace", "")
+        name = os.path.basename(meta.get("name", ""))
+        ns = os.path.basename(meta.get("namespace", ""))
         spec = m.get("spec") or {}
 
         bootstrap = (spec.get("bootstrap") or {}).get("initdb") or {}
+        bootstrap_secret = os.path.basename(
+            (bootstrap.get("secret") or {}).get("name", ""))
 
         _clusters[name] = {
             "name": name,
             "namespace": ns,
             "image_name": spec.get("imageName", ""),
-            "bootstrap_secret": (bootstrap.get("secret") or {}).get("name", ""),
+            "bootstrap_secret": bootstrap_secret,
             "post_init_sql": bootstrap.get("postInitSQL") or [],
             "pg_parameters": (spec.get("postgresql") or {}).get("parameters") or {},
             "server_alt_dns_names": (spec.get("certificates") or {}).get("serverAltDNSNames") or [],
