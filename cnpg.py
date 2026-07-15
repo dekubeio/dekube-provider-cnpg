@@ -42,6 +42,8 @@ class CnpgIndexer(IndexerConverter):
     def convert(self, kind, manifests, ctx):
         _clusters.clear()  # avoid stale data across repeated runs
         for m in manifests:
+            if not m:
+                continue
             self._index_cluster(m, ctx)
         return ConverterResult()
 
@@ -133,6 +135,8 @@ class CnpgProvider(Provider):
     def convert(self, kind, manifests, ctx):
         # Phase 1: index pooler aliases
         for m in manifests:
+            if not m:
+                continue
             self._index_pooler(m, ctx)
 
         # Phase 2: generate PG services from indexed clusters
@@ -383,6 +387,8 @@ class CnpgProvider(Provider):
         filepath = os.path.join(cm_dir, "initdb.sql")
         with open(filepath, "w", encoding="utf-8") as f:
             for stmt in info["post_init_sql"]:
+                if not stmt:
+                    continue
                 f.write(stmt.rstrip(";") + ";\n")
 
         ctx.generated_cms.add(cm_name)
