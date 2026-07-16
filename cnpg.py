@@ -9,23 +9,15 @@ cert-manager, TLS degrades gracefully (PG runs without SSL).
 """
 
 import os
-import secrets
-import string
 import sys
 
 from dekube import (  # pylint: disable=import-error  # h2c resolves at runtime
     ConverterResult, ProviderResult,
-    IndexerConverter, Provider, secret_value,
+    IndexerConverter, Provider, secret_value, generate_password,
 )
 
 # Module-level state shared between CnpgIndexer and CnpgProvider
 _clusters = {}
-
-
-def _generate_password(length=64):
-    """Generate a random password (alphanumeric)."""
-    alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 class CnpgIndexer(IndexerConverter):
@@ -266,7 +258,7 @@ class CnpgProvider(Provider):
                       f"secrets/{auto_name}/", file=sys.stderr)
             else:
                 username = "app"
-                password = _generate_password()
+                password = generate_password(64)
                 os.makedirs(secret_dir, exist_ok=True)
                 with open(user_file, "w", encoding="utf-8") as f:
                     f.write(username)
@@ -306,7 +298,7 @@ class CnpgProvider(Provider):
             print(f"  cnpg: reusing superuser credentials from "
                   f"secrets/{secret_name}/", file=sys.stderr)
         else:
-            su_password = _generate_password()
+            su_password = generate_password(64)
             os.makedirs(secret_dir, exist_ok=True)
             with open(pw_file, "w", encoding="utf-8") as f:
                 f.write(su_password)
