@@ -58,6 +58,27 @@ None (stdlib only). Optional: `dekube-converter-cert-manager` for TLS.
 
 **No replication.** Compose is single-instance. The `-rw`, `-r`, and `-ro` services all resolve to the same container. If you're running `instances: 3` in K8s and expect HA in compose, see above re: actions and consequences.
 
+## Upgrading from ≤ v0.1.x
+
+Before this version, PGDATA lived in the container's anonymous volume, not under `./data/<cluster>-1`. Upgrading in place will make postgres initdb a fresh, empty PGDATA at the new path — your old data is still in the anonymous volume, but the new compose file no longer mounts it. Copying the old data dir across does not work either: the new bootstrap step won't run against an already-initialized PGDATA, and the superuser changed (pre-fix, the container's superuser was the app user, e.g. `app`; this version bootstraps a real `postgres` superuser and creates the app owner role separately).
+
+Dump before regenerating, restore after:
+
+```bash
+# 1. With the OLD compose stack still running, dump everything (roles + data)
+#    as the old superuser (the bootstrap secret's username, "app" by default):
+docker compose exec <cluster> pg_dumpall -U app > dump.sql
+
+# 2. Regenerate with the new version and bring the stack up (fresh PGDATA,
+#    new "postgres" superuser + app owner role get bootstrapped).
+python3 helmfile2compose.py ... && docker compose up -d
+
+# 3. Restore into the new cluster as the postgres superuser:
+cat dump.sql | docker compose exec -T <cluster> psql -U postgres -d postgres
+```
+
+Step 3 may print "role already exists" for the app role — harmless, the new bootstrap already created it; the data restore still applies.
+
 ## Usage
 
 Via dekube-manager:

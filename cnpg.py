@@ -78,7 +78,12 @@ class CnpgIndexer(IndexerConverter):
             if not ctx.first_run:
                 ctx.warnings.append(
                     f"PVC '{pvc}' (CNPG PGDATA) not in dekube.yaml — using host_path {pvc}; "
-                    f"add it under volumes: to make it explicit")
+                    f"add it under volumes: to make it explicit. If you're upgrading from a "
+                    f"version that didn't persist PGDATA, that old data is NOT under "
+                    f"./data/{pvc} (it lived in the container's anonymous volume) — dump it "
+                    f"with pg_dumpall from the OLD container before running `up`, then restore "
+                    f"after. Copying the old data dir over does not work: the new bootstrap "
+                    f"won't run against an existing PGDATA, and the superuser differs.")
 
         self._emit_certs(name, _clusters[name], ctx)
         print(f"  cnpg: indexed cluster '{name}' (namespace: {ns})",
