@@ -66,11 +66,19 @@ class CnpgIndexer(IndexerConverter):
         }
 
         # PGDATA persists like any PVC (CNPG names the first instance's PVC <cluster>-1).
-        # Registered here (indexer, priority 90) so first-run config has it before the provider mounts it.
+        # Registered here (indexer, priority 90) so config has it before the provider mounts it.
+        # Also on non-first runs: compose needs the key (a bare name is an undefined named volume),
+        # and the engine only saves dekube.yaml on first run — so warn instead.
         pvc = f"{name}-1"
         ctx.pvc_names.add(pvc)
-        if ctx.first_run and pvc not in (ctx.config.get("volumes") or {}):
-            ctx.config.setdefault("volumes", {})[pvc] = {"host_path": pvc}
+        volumes = ctx.config.get("volumes") or {}
+        if pvc not in volumes:
+            volumes[pvc] = {"host_path": pvc}
+            ctx.config["volumes"] = volumes
+            if not ctx.first_run:
+                ctx.warnings.append(
+                    f"PVC '{pvc}' (CNPG PGDATA) not in dekube.yaml — using host_path {pvc}; "
+                    f"add it under volumes: to make it explicit")
 
         self._emit_certs(name, _clusters[name], ctx)
         print(f"  cnpg: indexed cluster '{name}' (namespace: {ns})",
@@ -297,6 +305,9 @@ class CnpgProvider(Provider):
                 username = f.read().strip()
             with open(pw_file, encoding="utf-8") as f:
                 password = f.read().strip()
+            # Pre-fix dirs (no dbname) had a hardcoded "app" user: adopt the CNPG owner, keep the password
+            if not os.path.isfile(os.path.join(secret_dir, "dbname")):
+                username = info["owner"]
             print(f"  cnpg: reusing credentials from "
                   f"secrets/{auto_name}/", file=sys.stderr)
         else:
