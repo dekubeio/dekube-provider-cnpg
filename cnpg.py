@@ -236,8 +236,8 @@ class CnpgProvider(Provider):
             # gosu to postgres user.
             cmd = [
                 "bash", "-c",
-                "install -o postgres -g postgres -m 600 "
-                "/tmp/server.key /var/lib/postgresql/server.key && "
+                "install -D -o postgres -g postgres -m 600 "
+                "/tmp/server.key /etc/postgresql/tls/server.key && "
                 "exec docker-entrypoint.sh postgres "
                 "-c config_file=/etc/postgresql/postgresql.conf "
                 "-c hba_file=/etc/postgresql/pg_hba.conf",
@@ -429,11 +429,11 @@ class CnpgProvider(Provider):
             lines.append("# TLS (certs from cert-manager)")
             lines.append("ssl = on")
             lines.append(
-                "ssl_cert_file = '/var/lib/postgresql/server.crt'")
+                "ssl_cert_file = '/etc/postgresql/tls/server.crt'")
             lines.append(
-                "ssl_key_file = '/var/lib/postgresql/server.key'")
+                "ssl_key_file = '/etc/postgresql/tls/server.key'")
             lines.append(
-                "ssl_ca_file = '/var/lib/postgresql/ca.crt'")
+                "ssl_ca_file = '/etc/postgresql/tls/ca.crt'")
 
         filepath = os.path.join(cm_dir, "postgresql.conf")
         with open(filepath, "w", encoding="utf-8") as f:
@@ -491,9 +491,9 @@ class CnpgProvider(Provider):
 
         volumes.extend([
             f"./secrets/{server_secret}/tls.crt"
-            f":/var/lib/postgresql/server.crt:ro",
+            f":/etc/postgresql/tls/server.crt:ro",
             f"./secrets/{server_secret}/tls.key:/tmp/server.key:ro",
-            f"./secrets/{ca_secret}/ca.crt:/var/lib/postgresql/ca.crt:ro",
+            f"./secrets/{ca_secret}/ca.crt:/etc/postgresql/tls/ca.crt:ro",
         ])
 
         # pg_hba.conf: require SSL for all remote connections

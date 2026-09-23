@@ -79,6 +79,10 @@ cat dump.sql | docker compose exec -T <cluster> psql -U postgres -d postgres
 
 Step 3 may print "role already exists" for the app role — harmless, the new bootstrap already created it; the data restore still applies.
 
+## Upgrading from v0.2.0
+
+v0.2.0 mounted the TLS key at `/var/lib/postgresql/server.key`, which on PostgreSQL 18+ is inside the PGDATA PVC; this version moves TLS files to `/etc/postgresql/tls/` instead — a stale `server.key` (and `server.crt`/`ca.crt`) left behind under `./data/<cluster>-1/` by v0.2.0 is no longer read and can be safely deleted.
+
 ## Usage
 
 Via dekube-manager:
