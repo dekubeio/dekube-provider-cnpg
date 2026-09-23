@@ -56,6 +56,9 @@ class CnpgIndexer(IndexerConverter):
             "namespace": ns,
             "image_name": spec.get("imageName", ""),
             "bootstrap_secret": bootstrap_secret,
+            "database": bootstrap.get("database") or "app",
+            # CNPG: owner defaults to the database name
+            "owner": bootstrap.get("owner") or bootstrap.get("database") or "app",
             "post_init_sql": bootstrap.get("postInitSQL") or [],
             "pg_parameters": (spec.get("postgresql") or {}).get("parameters") or {},
             "server_alt_dns_names": (spec.get("certificates") or {}).get("serverAltDNSNames") or [],
@@ -172,12 +175,22 @@ class CnpgProvider(Provider):
         name = info["name"]
         image = self._map_image(info["image_name"])
 
-        # Credentials
-        env = self._resolve_credentials(info, ctx)
-
-        # Superuser secret
+        # Credentials: the image's superuser is CNPG's postgres superuser;
+        # the application owner role + database come from 00-bootstrap.sh.
+        owner, owner_pw = self._resolve_credentials(info, ctx)
+        su_password = self._superuser_password(info, ctx)
+        # CBA: CNPG defaults enableSuperuserAccess to false — kept true here, P1
         if info["enable_superuser"]:
-            self._generate_superuser_secret(info, ctx)
+            self._generate_superuser_secret(info, ctx, su_password)
+        env = {
+            "POSTGRES_USER": "postgres",
+            "POSTGRES_PASSWORD": su_password,
+            "POSTGRES_DB": "postgres",
+            # consumed by 00-bootstrap.sh (CNPG initdb: owner role + application database)
+            "CNPG_OWNER": owner,
+            "CNPG_OWNER_PASSWORD": owner_pw,
+            "CNPG_DATABASE": info["database"],
+        }
 
         # Check TLS availability before writing config
         has_tls = (f"{name}-server-tls" in ctx.secrets
@@ -192,11 +205,8 @@ class CnpgProvider(Provider):
         pg_conf_path = self._write_pg_conf(name, info, has_tls, ctx)
         volumes.append(f"./{pg_conf_path}:/etc/postgresql/postgresql.conf:ro")
 
-        # postInitSQL
-        if info["post_init_sql"]:
-            initdb_path = self._write_initdb(name, info, ctx)
-            volumes.append(
-                f"./{initdb_path}:/docker-entrypoint-initdb.d/initdb.sql:ro")
+        # initdb: owner role + application database (always), postInitSQL (if any)
+        volumes.extend(self._write_initdb(name, info, ctx))
 
         # PGDATA (PVC <cluster>-1, registered by the indexer)
         volumes.extend(convert_volume_mounts(
@@ -262,7 +272,11 @@ class CnpgProvider(Provider):
 
     @staticmethod
     def _resolve_credentials(info, ctx):
-        """Resolve bootstrap credentials or auto-generate them."""
+        """Resolve the owner credentials from the bootstrap secret, or auto-generate them.
+
+        Returns (username, password). With a user secret, the username comes from it
+        (CNPG requires owner == secret username).
+        """
         secret_name = info["bootstrap_secret"]
         cluster_name = info["name"]
         auto_name = secret_name or f"{cluster_name}-app"
@@ -271,52 +285,55 @@ class CnpgProvider(Provider):
             sec = ctx.secrets[secret_name]
             username = secret_value(sec, "username") or "app"
             password = secret_value(sec, "password") or ""
+            return username, password
+
+        # Auto-generate (idempotent: reuse if already on disk)
+        secret_dir = os.path.join(ctx.output_dir, "secrets", auto_name)
+        pw_file = os.path.join(secret_dir, "password")
+        user_file = os.path.join(secret_dir, "username")
+
+        if os.path.isfile(pw_file) and os.path.isfile(user_file):
+            with open(user_file, encoding="utf-8") as f:
+                username = f.read().strip()
+            with open(pw_file, encoding="utf-8") as f:
+                password = f.read().strip()
+            print(f"  cnpg: reusing credentials from "
+                  f"secrets/{auto_name}/", file=sys.stderr)
         else:
-            # Auto-generate (idempotent: reuse if already on disk)
-            secret_dir = os.path.join(ctx.output_dir, "secrets", auto_name)
-            pw_file = os.path.join(secret_dir, "password")
-            user_file = os.path.join(secret_dir, "username")
+            username = info["owner"]
+            password = generate_password(64)
+            print(f"  cnpg: generated credentials → "
+                  f"secrets/{auto_name}/", file=sys.stderr)
 
-            if os.path.isfile(pw_file) and os.path.isfile(user_file):
-                with open(user_file, encoding="utf-8") as f:
-                    username = f.read().strip()
-                with open(pw_file, encoding="utf-8") as f:
-                    password = f.read().strip()
-                print(f"  cnpg: reusing credentials from "
-                      f"secrets/{auto_name}/", file=sys.stderr)
-            else:
-                username = "app"
-                password = generate_password(64)
-                os.makedirs(secret_dir, exist_ok=True)
-                with open(user_file, "w", encoding="utf-8") as f:
-                    f.write(username)
-                with open(pw_file, "w", encoding="utf-8") as f:
-                    f.write(password)
-                print(f"  cnpg: generated credentials → "
-                      f"secrets/{auto_name}/", file=sys.stderr)
-
-            ctx.secrets[auto_name] = {
-                "metadata": {"name": auto_name},
-                "stringData": {"username": username, "password": password},
-            }
-            ctx.generated_secrets.add(auto_name)
-
-        return {
-            "POSTGRES_USER": username,
-            "POSTGRES_PASSWORD": password,
-            "POSTGRES_DB": username,
+        # CNPG-shaped app secret
+        host = f"{cluster_name}-rw"
+        string_data = {
+            "username": username, "user": username, "password": password,
+            "dbname": info["database"], "host": host, "port": "5432",
+            "uri": f"postgresql://{username}:{password}@{host}:5432/{info['database']}",
         }
+        os.makedirs(secret_dir, exist_ok=True)
+        out_real = os.path.realpath(ctx.output_dir) + os.sep
+        for key, val in string_data.items():
+            out_path = os.path.join(secret_dir, key)
+            if not os.path.realpath(out_path).startswith(out_real):
+                continue
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(val)
+
+        ctx.secrets[auto_name] = {
+            "metadata": {"name": auto_name},
+            "stringData": string_data,
+        }
+        ctx.generated_secrets.add(auto_name)
+        return username, password
 
     # -- Superuser secret ----------------------------------------------------
 
     @staticmethod
-    def _generate_superuser_secret(info, ctx):
-        """Generate superuser secret emulating CNPG operator."""
-        name = info["name"]
-        ns = info["namespace"]
-        secret_name = f"{name}-superuser"
-
-        # Idempotent: reuse existing password from disk
+    def _superuser_password(info, ctx):
+        """Read or generate the postgres superuser password (idempotent, on disk)."""
+        secret_name = f"{info['name']}-superuser"
         secret_dir = os.path.join(ctx.output_dir, "secrets", secret_name)
         pw_file = os.path.join(secret_dir, "password")
 
@@ -332,6 +349,15 @@ class CnpgProvider(Provider):
                 f.write(su_password)
             print(f"  cnpg: generated superuser credentials → "
                   f"secrets/{secret_name}/", file=sys.stderr)
+        return su_password
+
+    @staticmethod
+    def _generate_superuser_secret(info, ctx, su_password):
+        """Generate superuser secret emulating CNPG operator."""
+        name = info["name"]
+        ns = info["namespace"]
+        secret_name = f"{name}-superuser"
+        secret_dir = os.path.join(ctx.output_dir, "secrets", secret_name)
 
         host = f"{name}-rw"
         short_fqdn = f"{host}.{ns}" if ns else host
@@ -402,20 +428,42 @@ class CnpgProvider(Provider):
 
     @staticmethod
     def _write_initdb(name, info, ctx):
-        """Write postInitSQL to a .sql file. Returns relative path."""
+        """Write initdb scripts. Returns compose volume strings.
+
+        00-bootstrap.sh: CNPG initdb — owner role + application database (always).
+        10-post-init.sql: postInitSQL, run as superuser in `postgres` like CNPG (if any).
+        The image sources non-executable .sh files, so mode bits don't matter.
+        """
         cm_name = f"{name}-initdb"
         cm_dir = os.path.join(ctx.output_dir, "configmaps", cm_name)
         os.makedirs(cm_dir, exist_ok=True)
 
-        filepath = os.path.join(cm_dir, "initdb.sql")
-        with open(filepath, "w", encoding="utf-8") as f:
-            for stmt in info["post_init_sql"]:
-                if not stmt:
-                    continue
-                f.write(stmt.rstrip(";") + ";\n")
+        # psql variables do the quoting: passwords with ' or $ are safe
+        with open(os.path.join(cm_dir, "00-bootstrap.sh"), "w", encoding="utf-8") as f:
+            f.write(
+                "#!/bin/sh\n"
+                "# Generated by dekube-provider-cnpg — CNPG initdb: "
+                "application owner role + database.\n"
+                'psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres \\\n'
+                '  -v owner="$CNPG_OWNER" -v pw="$CNPG_OWNER_PASSWORD" '
+                '-v db="$CNPG_DATABASE" <<\'EOSQL\'\n'
+                "CREATE ROLE :\"owner\" LOGIN PASSWORD :'pw';\n"
+                'CREATE DATABASE :"db" OWNER :"owner";\n'
+                "EOSQL\n")
+        volumes = [f"./configmaps/{cm_name}/00-bootstrap.sh"
+                   ":/docker-entrypoint-initdb.d/00-bootstrap.sh:ro"]
+
+        if info["post_init_sql"]:
+            with open(os.path.join(cm_dir, "10-post-init.sql"), "w", encoding="utf-8") as f:
+                for stmt in info["post_init_sql"]:
+                    if not stmt:
+                        continue
+                    f.write(stmt.rstrip(";") + ";\n")
+            volumes.append(f"./configmaps/{cm_name}/10-post-init.sql"
+                           ":/docker-entrypoint-initdb.d/10-post-init.sql:ro")
 
         ctx.generated_cms.add(cm_name)
-        return f"configmaps/{cm_name}/initdb.sql"
+        return volumes
 
     # -- TLS -----------------------------------------------------------------
 

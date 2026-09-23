@@ -19,10 +19,12 @@ Emulates the CNPG operator's behavior for a compose environment. The CNPG Docker
 
 **Cluster CR:**
 - Maps `spec.imageName` version tag to standard postgres image (`ghcr.io/cloudnative-pg/postgresql:18.3` -> `postgres:18.3`)
-- Resolves bootstrap credentials from referenced Secret or auto-generates them (idempotent across runs)
+- Resolves the application owner credentials from `bootstrap.initdb.secret` or auto-generates them into `<cluster>-app` (idempotent across runs; keys `username`, `user`, `password`, `dbname`, `host`, `port`, `uri`, like CNPG)
+- Runs the image as CNPG does: `POSTGRES_USER=postgres` with the superuser password, `POSTGRES_DB=postgres`; an initdb script creates the owner role (`bootstrap.initdb.owner`, default: the database name) and the application database (`bootstrap.initdb.database`, default `app`) from `CNPG_OWNER` / `CNPG_OWNER_PASSWORD` / `CNPG_DATABASE`
 - Generates superuser secret with connection URIs (`uri`, `fqdn-uri`, `jdbc-uri`, `pgpass`) emulating CNPG operator output
-- Writes `postgresql.conf` from `spec.postgresql.parameters`
-- Writes `postInitSQL` to `/docker-entrypoint-initdb.d/`
+- Writes `postgresql.conf` from `spec.postgresql.parameters` (plus `listen_addresses = '*'` unless set)
+- Runs `postInitSQL` after the bootstrap, as superuser in the `postgres` database (as CNPG does)
+- Persists PGDATA as PVC `<cluster>-1` (CNPG's PVC name), mapped through `volumes:` in `dekube.yaml` like any other PVC
 - Registers `-rw`, `-r`, `-ro` service aliases in compose DNS (all point to the same container -- compose is single-instance)
 
 **TLS (requires dekube-converter-cert-manager):**
