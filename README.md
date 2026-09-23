@@ -81,7 +81,9 @@ Step 3 may print "role already exists" for the app role — harmless, the new bo
 
 ## Upgrading from v0.2.0
 
-v0.2.0 mounted the TLS key at `/var/lib/postgresql/server.key`, which on PostgreSQL 18+ is inside the PGDATA PVC; this version moves TLS files to `/etc/postgresql/tls/` instead — a stale `server.key` (and `server.crt`/`ca.crt`) left behind under `./data/<cluster>-1/` by v0.2.0 is no longer read and can be safely deleted.
+v0.2.0 mounted the TLS key at `/var/lib/postgresql/server.key`, which on PostgreSQL 18+ is inside the PGDATA PVC; this version moves TLS files to `/etc/postgresql/tls/` instead — a stale `server.key` (and `server.crt`/`ca.crt`) left behind under `./data/<cluster>-1/` by v0.2.0 is no longer read and should be deleted. `server.key` there may actually be the current private key, since cert-manager ≥ v0.5.0 reuses existing keys rather than regenerating them — leaving it in place is misleading, not harmless.
+
+Deleting needs `sudo`: `server.crt` and `ca.crt` are empty mountpoint files Docker created as root when the old bind mounts were set up, and `server.key` is owned by uid 999 (the postgres user in the container), mode 0600.
 
 ## Usage
 
