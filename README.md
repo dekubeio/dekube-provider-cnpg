@@ -85,7 +85,7 @@ v0.2.0 mounted the TLS key at `/var/lib/postgresql/server.key`, which on Postgre
 
 Deleting needs `sudo`: `server.crt` and `ca.crt` are empty mountpoint files Docker created as root when the old bind mounts were set up, and `server.key` is owned by uid 999 (the postgres user in the container), mode 0600.
 
-## Upgrading to this version: enableSuperuserAccess now defaults to false
+## Upgrading from ≤ v0.2.1: enableSuperuserAccess now defaults to false
 
 Older versions always published a `<cluster>-superuser` Secret. This provider now matches CNPG's own default (`spec.enableSuperuserAccess` is disabled unless set): a superuser Secret is only generated when your Cluster manifest sets `enableSuperuserAccess: true`. If any app in your `dekube.yaml` references `<cluster>-superuser`, add `enableSuperuserAccess: true` to the Cluster spec before regenerating — exactly what you'd need to do against a real CNPG cluster.
 
