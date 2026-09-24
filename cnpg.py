@@ -62,7 +62,10 @@ class CnpgIndexer(IndexerConverter):
             "post_init_sql": bootstrap.get("postInitSQL") or [],
             "pg_parameters": (spec.get("postgresql") or {}).get("parameters") or {},
             "server_alt_dns_names": (spec.get("certificates") or {}).get("serverAltDNSNames") or [],
-            "enable_superuser": spec.get("enableSuperuserAccess", True),
+            # CNPG defaults this to false (cluster_types.go: enableSuperuserAccess
+            # disabled by default; when disabled the operator blanks the postgres
+            # password). Match that default.
+            "enable_superuser": spec.get("enableSuperuserAccess", False),
         }
 
         # PGDATA persists like any PVC (CNPG names the first instance's PVC <cluster>-1).
@@ -191,8 +194,12 @@ class CnpgProvider(Provider):
         # Credentials: the image's superuser is CNPG's postgres superuser;
         # the application owner role + database come from 00-bootstrap.sh.
         owner, owner_pw = self._resolve_credentials(info, ctx)
+        # Always resolve+persist the password on disk (idempotent, needed for
+        # POSTGRES_PASSWORD regardless of enableSuperuserAccess), but only
+        # register/publish the `<cluster>-superuser` Secret for consumers
+        # when enabled — matches CNPG: disabled by default, no operator-
+        # managed superuser secret unless enableSuperuserAccess: true.
         su_password = self._superuser_password(info, ctx)
-        # CBA: CNPG defaults enableSuperuserAccess to false — kept true here, P1
         if info["enable_superuser"]:
             self._generate_superuser_secret(info, ctx, su_password)
         env = {

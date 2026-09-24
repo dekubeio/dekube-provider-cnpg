@@ -21,7 +21,7 @@ Emulates the CNPG operator's behavior for a compose environment. The CNPG Docker
 - Maps `spec.imageName` version tag to standard postgres image (`ghcr.io/cloudnative-pg/postgresql:18.3` -> `postgres:18.3`)
 - Resolves the application owner credentials from `bootstrap.initdb.secret` or auto-generates them into `<cluster>-app` (idempotent across runs; keys `username`, `user`, `password`, `dbname`, `host`, `port`, `uri`, like CNPG)
 - Runs the image as CNPG does: `POSTGRES_USER=postgres` with the superuser password, `POSTGRES_DB=postgres`; an initdb script creates the owner role (`bootstrap.initdb.owner`, default: the database name) and the application database (`bootstrap.initdb.database`, default `app`) from `CNPG_OWNER` / `CNPG_OWNER_PASSWORD` / `CNPG_DATABASE`
-- Generates superuser secret with connection URIs (`uri`, `fqdn-uri`, `jdbc-uri`, `pgpass`) emulating CNPG operator output
+- Generates superuser secret with connection URIs (`uri`, `fqdn-uri`, `jdbc-uri`, `pgpass`) emulating CNPG operator output, but only when `spec.enableSuperuserAccess: true` (disabled by default, matching CNPG) — the postgres superuser password is still generated and persisted on disk either way (needed to start the container), it just isn't published as a `<cluster>-superuser` Secret other services can reference
 - Writes `postgresql.conf` from `spec.postgresql.parameters` (plus `listen_addresses = '*'` unless set)
 - Runs `postInitSQL` after the bootstrap, as superuser in the `postgres` database (as CNPG does)
 - Persists PGDATA as PVC `<cluster>-1` (CNPG's PVC name), mapped through `volumes:` in `dekube.yaml` like any other PVC
@@ -84,6 +84,10 @@ Step 3 may print "role already exists" for the app role — harmless, the new bo
 v0.2.0 mounted the TLS key at `/var/lib/postgresql/server.key`, which on PostgreSQL 18+ is inside the PGDATA PVC; this version moves TLS files to `/etc/postgresql/tls/` instead — a stale `server.key` (and `server.crt`/`ca.crt`) left behind under `./data/<cluster>-1/` by v0.2.0 is no longer read and should be deleted. `server.key` there may actually be the current private key, since cert-manager ≥ v0.5.0 reuses existing keys rather than regenerating them — leaving it in place is misleading, not harmless.
 
 Deleting needs `sudo`: `server.crt` and `ca.crt` are empty mountpoint files Docker created as root when the old bind mounts were set up, and `server.key` is owned by uid 999 (the postgres user in the container), mode 0600.
+
+## Upgrading to this version: enableSuperuserAccess now defaults to false
+
+Older versions always published a `<cluster>-superuser` Secret. This provider now matches CNPG's own default (`spec.enableSuperuserAccess` is disabled unless set): a superuser Secret is only generated when your Cluster manifest sets `enableSuperuserAccess: true`. If any app in your `dekube.yaml` references `<cluster>-superuser`, add `enableSuperuserAccess: true` to the Cluster spec before regenerating — exactly what you'd need to do against a real CNPG cluster.
 
 ## Usage
 
