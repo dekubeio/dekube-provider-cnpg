@@ -105,14 +105,16 @@ python3 helmfile2compose.py --extensions-dir ./dekube-provider-cnpg --helmfile-d
 
 ## Code quality
 
+*Last updated: 2026-09-24*
+
 | Metric | Value |
 |--------|-------|
-| Pylint | 9.84/10 |
+| Pylint | 9.51/10 |
 | Pyflakes | clean |
-| Radon MI | 43.99 (A) |
-| Radon avg CC | 4.125 (A) |
+| Radon MI | 41.32 (A) |
+| Radon avg CC | 4.9 (A) |
 
-Worst CC: `_index_cluster` (11, C) — 8 YAML field extractions, not logic complexity.
+Worst CC: `_index_cluster` (17, C) — `or`-defaulted YAML field extractions plus the PGDATA volume registration, not branching logic — and `_resolve_credentials` (11, C). No function rated D or worse.
 
 ## License
 
